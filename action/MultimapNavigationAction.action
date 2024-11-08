@@ -1,0 +1,13 @@
+# Goal definition
+float64 target_x
+float64 target_y
+float64 target_yaw
+string target_map
+
+---
+# Result definition
+bool success
+
+---
+# Feedback definition
+string current_status
