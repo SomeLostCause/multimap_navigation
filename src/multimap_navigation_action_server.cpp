@@ -9,9 +9,8 @@
 #include <tf/transform_listener.h>
 #include <geometry_msgs/PoseStamped.h>
 #include "multimap_navigation/MultimapNavigationActionAction.h"
-// #include "multimap_navigation/multimap_navigation_action_server.h"
-#include <ros/package.h>  // To get the package path
-#include <std_srvs/Empty.h>  // To clear the costmap
+#include <ros/package.h>
+#include <std_srvs/Empty.h>
 #include <cstdlib> 
 
 // Action server class
@@ -28,8 +27,12 @@ public:
     MultimapNavigationActionServer(const std::string &name)
         : as_(nh_, name, boost::bind(&MultimapNavigationActionServer::executeCB, this, _1), false),
           action_name_(name), move_base_client_("move_base", true) {
+
+        //store the file path to a variable by using find_package /data/multimap.db
+        std::string db_path = ros::package::getPath("multimap_navigation") + "/data/multimap.db";
+
         // Open database
-        if (sqlite3_open("/home/athul/anscer_ws/src/multimap_navigation/data/multimap.db", &db_) != SQLITE_OK) {
+        if (sqlite3_open(db_path, &db_) != SQLITE_OK) {
             ROS_ERROR("Failed to open database!");
         }
         current_map_ = "map1";
@@ -116,10 +119,7 @@ bool switchMap(const std::string &target_map) {
     // Set the map file path as a parameter for the map_server node
     nh_.setParam("map_server/map_file", map_file_path);
 
-    // Clear the costmaps to ensure fresh navigation in the new map
-    ros::ServiceClient clear_costmaps_client = nh_.serviceClient<std_srvs::Empty>("move_base/clear_costmaps");
-    std_srvs::Empty clear_srv;
-    clear_costmaps_client.call(clear_srv);
+
 
     // Kill the existing map_server node (if it's running)
     ROS_INFO("Killing the map_server node...");
@@ -129,14 +129,6 @@ bool switchMap(const std::string &target_map) {
         ROS_WARN("Failed to kill the previous map_server node. It might not be running.");
     }
     
-    //kill amcl node also
-    std::string amcl_command = "rosnode kill /amcl";
-    if (system(amcl_command.c_str()) == 0) {
-        ROS_INFO("Successfully killed the previous amcl node.");
-    } else {
-        ROS_WARN("Failed to kill the previous amcl node. It might not be running.");
-    }
- 
 
     ros::Duration(2.0).sleep();
 
@@ -145,15 +137,6 @@ bool switchMap(const std::string &target_map) {
     // std::string command = "rosrun map_server map_server map_file:=" + map_file_path;
     std::string command = "rosrun map_server map_server " + map_file_path + " &";
     
-    //start amcl using a launch file
-    std::string amcl_launch_file = "amcl_localization.launch";
-    std::string amcl_restart_command = "roslaunch anscer_navigation " + amcl_launch_file + " &";
-    if (system(amcl_restart_command.c_str()) == 0) {
-        ROS_INFO("Successfully restarted amcl with map: %s", target_map.c_str());
-    } else {
-        ROS_ERROR("Failed to start amcl with map: %s", target_map.c_str());
-    }
-
 
     if (system(command.c_str()) == 0) {
         ros::Duration(2.0).sleep();
@@ -206,7 +189,12 @@ bool switchMap(const std::string &target_map) {
 
 // Create the initial pose message
         geometry_msgs::PoseWithCovarianceStamped initial_pose;
-        initial_pose.header.stamp = ros::Time::now();
+        initial_pose.header.stamp = ros::Time::now();    // Clear the costmaps to ensure fresh navigation in the new map
+        ros::ServiceClient clear_costmaps_client = nh_.serviceClient<std_srvs::Empty>("move_base/clear_costmaps");
+        std_srvs::Empty clear_srv;
+
+
+        clear_costmaps_client.call(clear_srv);
         initial_pose.header.frame_id = "map";  // Make sure the frame matches your map frame
 
         initial_pose.pose.pose.position.x = exit_x;
