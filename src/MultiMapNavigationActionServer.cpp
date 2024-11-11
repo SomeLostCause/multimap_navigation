@@ -205,10 +205,10 @@ bool MultimapNavigationActionServer::reinitializeAtExit(const std::string& targe
     return false;
 }
 
-bool getCurrentRobotPosition(double& x, double& y) {
+bool MultimapNavigationActionServer::getCurrentRobotPosition(double& x, double& y) {
     geometry_msgs::PoseWithCovarianceStamped::ConstPtr amclPose;
 
-    amclPose = ros::topic::waitForMessage<geometry_msgs::PoseWithCovarianceStamped>("/amcl_pose", nh, ros::Duration(5.0));
+    amclPose = ros::topic::waitForMessage<geometry_msgs::PoseWithCovarianceStamped>("/amcl_pose", m_nh, ros::Duration(5.0));
     if (amclPose) {
         x = amclPose->pose.pose.position.x;
         y = amclPose->pose.pose.position.y;
