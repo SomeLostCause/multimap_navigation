@@ -62,6 +62,14 @@ private:
      */
     bool reinitializeAtExit(const std::string& target_map, const std::string& temp_current_map);
 
+    /**
+     * @brief Retrieve the robot's current position.
+     * @param[out] x X coordinate of the robot's current position.
+     * @param[out] y Y coordinate of the robot's current position.
+     * @return true if position retrieval is successful, false otherwise.
+     */
+    bool getCurrentRobotPosition(double& x, double& y);
+
     // ROS-related member variables
     ros::NodeHandle m_nh;                      ///< ROS node handle
     ros::Publisher m_initialPosePub;           ///< Publisher for initial pose

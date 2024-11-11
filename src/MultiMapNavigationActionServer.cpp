@@ -57,7 +57,7 @@ void MultimapNavigationActionServer::executeCB(const multimap_navigation::Multim
 bool MultimapNavigationActionServer::navigateToWormhole(const std::string& target_map) {
     sqlite3_stmt* stmt;
     std::string query = "SELECT entry_x, entry_y, entry_yaw FROM wormholes WHERE source_map = ? AND target_map = ?";
-    
+
     if (sqlite3_prepare_v2(m_pDb, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         ROS_ERROR("Failed to prepare wormhole query!");
         return false;
@@ -69,25 +69,54 @@ bool MultimapNavigationActionServer::navigateToWormhole(const std::string& targe
     ROS_INFO("current_map = %s", m_currentMap.c_str());
     ROS_INFO("target_map = %s", target_map.c_str());
 
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
+    std::vector<std::tuple<double, double, double>> wormholes;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
         double entryX = sqlite3_column_double(stmt, 0);
         double entryY = sqlite3_column_double(stmt, 1);
         double entryYaw = sqlite3_column_double(stmt, 2);
-        sqlite3_finalize(stmt);
 
-        if (sendMoveBaseGoal(entryX, entryY)) {
-            ROS_INFO("Reached wormhole entry, preparing to switch map.");
-            return true;
-        } else {
-            ROS_ERROR("Failed to reach wormhole entry.");
-            return false;
-        }
+        wormholes.emplace_back(entryX, entryY, entryYaw);
     }
-    
-    ROS_ERROR("No wormhole found for map transition!");
     sqlite3_finalize(stmt);
-    return false;
+
+    if (wormholes.empty()) {
+        ROS_ERROR("No wormhole found for map transition!");
+        return false;
+    }
+
+    // Get current robot position
+    double robotX, robotY;
+    if (!getCurrentRobotPosition(robotX, robotY)) {
+        ROS_ERROR("Failed to get current robot position!");
+        return false;
+    }
+
+    // Find the closest wormhole
+    auto closestWormhole = std::min_element(wormholes.begin(), wormholes.end(),
+        [robotX, robotY](const auto& w1, const auto& w2) {
+            double dist1 = std::hypot(std::get<0>(w1) - robotX, std::get<1>(w1) - robotY);
+            double dist2 = std::hypot(std::get<0>(w2) - robotX, std::get<1>(w2) - robotY);
+            return dist1 < dist2;
+        });
+
+    double entryX = std::get<0>(*closestWormhole);
+    double entryY = std::get<1>(*closestWormhole);
+    double entryYaw = std::get<2>(*closestWormhole);
+
+    // Print selected coordinates
+    ROS_INFO("Selected wormhole entry coordinates: x = %.2f, y = %.2f, yaw = %.2f", entryX, entryY, entryYaw);
+
+    // Send goal to the closest wormhole entry
+    if (sendMoveBaseGoal(entryX, entryY)) {
+        ROS_INFO("Reached wormhole entry, preparing to switch map.");
+        return true;
+    } else {
+        ROS_ERROR("Failed to reach wormhole entry.");
+        return false;
+    }
 }
+
 
 bool MultimapNavigationActionServer::switchMap(const std::string& target_map) {
     m_currentMap = target_map;
@@ -174,6 +203,21 @@ bool MultimapNavigationActionServer::reinitializeAtExit(const std::string& targe
     ROS_ERROR("Failed to find exit position in target map.");
     sqlite3_finalize(stmt);
     return false;
+}
+
+bool getCurrentRobotPosition(double& x, double& y) {
+    geometry_msgs::PoseWithCovarianceStamped::ConstPtr amclPose;
+
+    amclPose = ros::topic::waitForMessage<geometry_msgs::PoseWithCovarianceStamped>("/amcl_pose", nh, ros::Duration(5.0));
+    if (amclPose) {
+        x = amclPose->pose.pose.position.x;
+        y = amclPose->pose.pose.position.y;
+        ROS_INFO("Robot position retrieved: x = %.2f, y = %.2f", x, y);
+        return true;
+    } else {
+        ROS_ERROR("Failed to get robot position from /amcl_pose!");
+        return false;
+    }
 }
 
 int main(int argc, char** argv) {
