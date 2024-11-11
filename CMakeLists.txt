@@ -33,6 +33,6 @@ include_directories(
   ${PROJECT_SOURCE_DIR}/devel/include  # Include generated headers
 )
 
-add_executable(multimap_navigation_action_server src/multiMapNavigationActionServer.cpp)
+add_executable(multimap_navigation_action_server src/MultiMapNavigationActionServer.cpp)
 target_link_libraries(multimap_navigation_action_server ${catkin_LIBRARIES} sqlite3)
 add_dependencies(multimap_navigation_action_server ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})

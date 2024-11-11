@@ -1,5 +1,5 @@
 #include "multimap_navigation/MultimapNavigationActionAction.h"
-#include "multimap_navigation/multimap_navigation_action_server.h"
+#include "multimap_navigation/MultiMapNavigationActionServer.h"
 #include <ros/package.h>
 #include <cstdlib>
 
