@@ -6,11 +6,10 @@ Follow these instructions to set up and run the MultiMapNavigation system.
 
 ### 1. Clone the Repository
 
-Download the MultiMapNavigation repository from GitHub:
+Download the AR100 repository from GitHub:
 
 ```bash
-git clone https://github.com/yourusername/MultiMapNavigation.git
-cd MultiMapNavigation
+git clone https://github.com/anscer/AR100.git
 ```
 
 ### 2. Start the ANSCER System
