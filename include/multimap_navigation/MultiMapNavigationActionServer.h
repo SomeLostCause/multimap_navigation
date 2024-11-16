@@ -10,6 +10,9 @@
 #include <tf/transform_listener.h>
 #include <multimap_navigation/MultimapNavigationActionAction.h>
 #include <std_srvs/Empty.h>
+#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
+#include <nav_msgs/GetPlan.h>
 
 class MultimapNavigationActionServer {
 public:
@@ -70,10 +73,17 @@ private:
      */
     bool reinitializeAtExit(const std::string& target_map, const std::string& temp_current_map);
 
+    void publishWormholeMarkers();
+
+    double calculatePathCost(double startX, double startY, double goalX, double goalY);
+
+
     // ROS-related member variables
     ros::NodeHandle m_nh;                      ///< ROS node handle
     ros::Publisher m_initialPosePub;           ///< Publisher for initial pose
+    ros::Publisher m_markerPub;               ///< Publisher for markers
     ros::ServiceClient m_clearCostmapsClient;  ///< Service client for clearing costmaps
+    ros::ServiceClient m_makePlanClient;  
 
     // Action server related variables
     actionlib::SimpleActionServer<multimap_navigation::MultimapNavigationActionAction> m_as;  ///< Action server for multimap navigation

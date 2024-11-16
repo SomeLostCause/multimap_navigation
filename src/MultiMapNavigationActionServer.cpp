@@ -19,8 +19,11 @@ MultimapNavigationActionServer::MultimapNavigationActionServer(const std::string
     // Initialize ROS publishers and service clients
     m_initialPosePub = m_nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 10);
     m_clearCostmapsClient = m_nh.serviceClient<std_srvs::Empty>("move_base/clear_costmaps");
+    m_markerPub = m_nh.advertise<visualization_msgs::MarkerArray>("wormholes_markers", 1);
+
 
     m_as.start();
+    publishWormholeMarkers();
     ROS_INFO("Multimap Navigation Action Server started with action name: %s", m_actionName.c_str());
 }
 
@@ -92,12 +95,12 @@ bool MultimapNavigationActionServer::navigateToWormhole(const std::string& targe
         return false;
     }
 
-    // Find the closest wormhole
+    // Find the closest wormhole based on cost
     auto closestWormhole = std::min_element(wormholes.begin(), wormholes.end(),
-        [robotX, robotY](const auto& w1, const auto& w2) {
-            double dist1 = std::hypot(std::get<0>(w1) - robotX, std::get<1>(w1) - robotY);
-            double dist2 = std::hypot(std::get<0>(w2) - robotX, std::get<1>(w2) - robotY);
-            return dist1 < dist2;
+        [this, robotX, robotY](const auto& w1, const auto& w2) {
+            double cost1 = calculatePathCost(robotX, robotY, std::get<0>(w1), std::get<1>(w1));
+            double cost2 = calculatePathCost(robotX, robotY, std::get<0>(w2), std::get<1>(w2));
+            return cost1 < cost2;
         });
 
     double entryX = std::get<0>(*closestWormhole);
@@ -217,6 +220,96 @@ bool MultimapNavigationActionServer::getCurrentRobotPosition(double& x, double& 
     } else {
         ROS_ERROR("Failed to get robot position from /amcl_pose!");
         return false;
+    }
+}
+
+// a function to publish a marker array to all the wormhole entries from the current map
+void MultimapNavigationActionServer::publishWormholeMarkers() {
+    visualization_msgs::MarkerArray markerArray;
+
+    // Create a Marker
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = ros::Time::now();
+    marker.ns = "wormholes";
+    marker.id = 0;  // Unique ID for each marker if there are multiple, change if needed
+    marker.type = visualization_msgs::Marker::POINTS;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.scale.x = 0.4;  // Set the size of the points
+    marker.scale.y = 0.4;
+    marker.color.r = 1.0;
+    marker.color.g = 1.0;
+    marker.color.b = 0.0;
+    marker.color.a = 1.0;
+    marker.lifetime = ros::Duration(0);  // 0 means the marker will last forever
+
+
+    sqlite3_stmt* stmt;
+    std::string query = "SELECT entry_x, entry_y FROM wormholes WHERE source_map =?";
+
+    if (sqlite3_prepare_v2(m_pDb, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+        ROS_ERROR("Failed to prepare wormhole entry query!");
+        return;
+    }
+
+    sqlite3_bind_text(stmt, 1, m_currentMap.c_str(), -1, SQLITE_STATIC);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        double entryX = sqlite3_column_double(stmt, 0);
+        double entryY = sqlite3_column_double(stmt, 1);
+
+        //print the values of entryX and entryY
+        ROS_INFO("Wormhole entry: x = %.2f, y = %.2f", entryX, entryY);
+
+        geometry_msgs::Point p;
+        p.x = entryX;
+        p.y = entryY;
+
+
+
+
+        // Add the point to the marker
+        marker.points.push_back(p);
+    }
+
+    sqlite3_finalize(stmt);
+
+    // Add the marker to the MarkerArray
+    markerArray.markers.push_back(marker);
+
+    if (!markerArray.markers.empty()) {
+        ROS_INFO("Publishing %lu markers", markerArray.markers.size());
+        //add a two second delay
+        ros::Duration(2.0).sleep();
+        m_markerPub.publish(markerArray);
+    } else {
+        ROS_WARN("MarkerArray is empty; no markers to publish.");
+    }
+
+
+    ROS_INFO("Published wormhole markers for map: %s", m_currentMap.c_str());
+}
+
+double MultimapNavigationActionServer::calculatePathCost(double startX, double startY, double goalX, double goalY) {
+    nav_msgs::GetPlan srv;
+    srv.request.start.pose.position.x = startX;
+    srv.request.start.pose.position.y = startY;
+    srv.request.start.pose.orientation.w = 1.0;  // Assume facing forward
+    srv.request.goal.pose.position.x = goalX;
+    srv.request.goal.pose.position.y = goalY;
+    srv.request.goal.pose.orientation.w = 1.0;  // Assume facing forward
+
+    if (m_makePlanClient.call(srv)) {
+        double cost = 0.0;
+        for (size_t i = 1; i < srv.response.plan.poses.size(); ++i) {
+            const auto& p1 = srv.response.plan.poses[i - 1].pose.position;
+            const auto& p2 = srv.response.plan.poses[i].pose.position;
+            cost += std::hypot(p2.x - p1.x, p2.y - p1.y);
+        }
+        return cost;
+    } else {
+        ROS_ERROR("Failed to call make_plan service");
+        return std::numeric_limits<double>::infinity();  // High cost if no path is found
     }
 }
 
