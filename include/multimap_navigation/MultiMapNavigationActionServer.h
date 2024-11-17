@@ -71,10 +71,21 @@ private:
      * @param temp_current_map The name of the previous map
      * @return true if reinitialization successful, false otherwise
      */
-    bool reinitializeAtExit(const std::string& target_map, const std::string& temp_current_map);
+    bool reinitializeAtExit(int wormholeID);
 
+    /**
+     * @brief Publish Wormhole markers for the current map
+     */
     void publishWormholeMarkers();
 
+    /**
+     * @brief Calculate the cost of the path to a wormhole
+     * @param startX The start positions x coordinate value
+     * @param startY the start positions y coordinate value
+     * @param goalX The goal positions x coordinate value
+     * @param goalY The goal positions y coordinate value
+     * @return true if reinitialization successful, false otherwise
+     */
     double calculatePathCost(double startX, double startY, double goalX, double goalY);
 
 
@@ -95,6 +106,7 @@ private:
     std::string m_currentMap;                 ///< Current map name
     std::string m_dbPath;                     ///< Path to the database file
     std::string m_mapPath;                    ///< Base path for map files
+    int m_selectedWormholeID;                 ///< ID of the selected wormhole
 
     // Navigation parameters
     const int m_maxRetries = 5;               ///< Maximum number of retries for pose publishing

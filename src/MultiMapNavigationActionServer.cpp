@@ -20,6 +20,8 @@ MultimapNavigationActionServer::MultimapNavigationActionServer(const std::string
     m_initialPosePub = m_nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 10);
     m_clearCostmapsClient = m_nh.serviceClient<std_srvs::Empty>("move_base/clear_costmaps");
     m_markerPub = m_nh.advertise<visualization_msgs::MarkerArray>("wormholes_markers", 1);
+    m_makePlanClient = m_nh.serviceClient<nav_msgs::GetPlan>("/move_base/make_plan");
+
 
 
     m_as.start();
@@ -47,7 +49,8 @@ void MultimapNavigationActionServer::executeCB(const multimap_navigation::Multim
             m_as.setAborted();
             return;
         }
-        reinitializeAtExit(targetMap, previousCurrentMap);
+        reinitializeAtExit(m_selectedWormholeID);
+        publishWormholeMarkers();
     }
 
     if (sendMoveBaseGoal(targetX, targetY)) {
@@ -59,7 +62,7 @@ void MultimapNavigationActionServer::executeCB(const multimap_navigation::Multim
 
 bool MultimapNavigationActionServer::navigateToWormhole(const std::string& target_map) {
     sqlite3_stmt* stmt;
-    std::string query = "SELECT entry_x, entry_y, entry_yaw FROM wormholes WHERE source_map = ? AND target_map = ?";
+    std::string query = "SELECT id, entry_x, entry_y, entry_yaw FROM wormholes WHERE source_map = ? AND target_map = ?";
 
     if (sqlite3_prepare_v2(m_pDb, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         ROS_ERROR("Failed to prepare wormhole query!");
@@ -72,14 +75,15 @@ bool MultimapNavigationActionServer::navigateToWormhole(const std::string& targe
     ROS_INFO("current_map = %s", m_currentMap.c_str());
     ROS_INFO("target_map = %s", target_map.c_str());
 
-    std::vector<std::tuple<double, double, double>> wormholes;
+    std::vector<std::tuple<int, double, double, double>> wormholes;
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
-        double entryX = sqlite3_column_double(stmt, 0);
-        double entryY = sqlite3_column_double(stmt, 1);
-        double entryYaw = sqlite3_column_double(stmt, 2);
+        int id = sqlite3_column_int(stmt, 0);
+        double entryX = sqlite3_column_double(stmt, 1);
+        double entryY = sqlite3_column_double(stmt, 2);
+        double entryYaw = sqlite3_column_double(stmt, 3);
 
-        wormholes.emplace_back(entryX, entryY, entryYaw);
+        wormholes.emplace_back(id, entryX, entryY, entryYaw);
     }
     sqlite3_finalize(stmt);
 
@@ -98,16 +102,23 @@ bool MultimapNavigationActionServer::navigateToWormhole(const std::string& targe
     // Find the closest wormhole based on cost
     auto closestWormhole = std::min_element(wormholes.begin(), wormholes.end(),
         [this, robotX, robotY](const auto& w1, const auto& w2) {
-            double cost1 = calculatePathCost(robotX, robotY, std::get<0>(w1), std::get<1>(w1));
-            double cost2 = calculatePathCost(robotX, robotY, std::get<0>(w2), std::get<1>(w2));
+            double cost1 = calculatePathCost(robotX, robotY, std::get<1>(w1), std::get<2>(w1));
+            double cost2 = calculatePathCost(robotX, robotY, std::get<1>(w2), std::get<2>(w2));
+            ROS_INFO("cost1 = %.2f, cost2 = %.2f", cost1, cost2);  // Debugging purpose
+
             return cost1 < cost2;
         });
 
-    double entryX = std::get<0>(*closestWormhole);
-    double entryY = std::get<1>(*closestWormhole);
-    double entryYaw = std::get<2>(*closestWormhole);
+    int selectedWormholeID = std::get<0>(*closestWormhole);  // Store the unique ID of the selected wormhole
+    double entryX = std::get<1>(*closestWormhole);
+    double entryY = std::get<2>(*closestWormhole);
+    double entryYaw = std::get<3>(*closestWormhole);
 
-    // Print selected coordinates
+    // Save the unique ID for later use
+    m_selectedWormholeID = selectedWormholeID;
+
+    // Print selected coordinates and ID
+    ROS_INFO("Selected wormhole ID: %d", selectedWormholeID);
     ROS_INFO("Selected wormhole entry coordinates: x = %.2f, y = %.2f, yaw = %.2f", entryX, entryY, entryYaw);
 
     // Send goal to the closest wormhole entry
@@ -160,20 +171,18 @@ bool MultimapNavigationActionServer::sendMoveBaseGoal(double x, double y) {
     return m_moveBaseClient.getState() == actionlib::SimpleClientGoalState::SUCCEEDED;
 }
 
-bool MultimapNavigationActionServer::reinitializeAtExit(const std::string& target_map, const std::string& temp_current_map) {
+bool MultimapNavigationActionServer::reinitializeAtExit(int wormholeID) {
     sqlite3_stmt* stmt;
-    std::string query = "SELECT exit_x, exit_y, exit_yaw FROM wormholes WHERE source_map = ? AND target_map = ?";
+    std::string query = "SELECT exit_x, exit_y, exit_yaw FROM wormholes WHERE id = ?";
 
-    ROS_INFO("current_map = %s", temp_current_map.c_str());
-    ROS_INFO("target_map = %s", target_map.c_str());
+    ROS_INFO("Reinitializing at wormhole exit with ID: %d", wormholeID);
 
     if (sqlite3_prepare_v2(m_pDb, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         ROS_ERROR("Failed to prepare exit position query!");
         return false;
     }
 
-    sqlite3_bind_text(stmt, 1, temp_current_map.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, target_map.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 1, wormholeID);
 
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         double exitX = sqlite3_column_double(stmt, 0);
@@ -203,10 +212,11 @@ bool MultimapNavigationActionServer::reinitializeAtExit(const std::string& targe
         return true;
     }
     
-    ROS_ERROR("Failed to find exit position in target map.");
+    ROS_ERROR("Failed to find exit position for wormhole ID: %d", wormholeID);
     sqlite3_finalize(stmt);
     return false;
 }
+
 
 bool MultimapNavigationActionServer::getCurrentRobotPosition(double& x, double& y) {
     geometry_msgs::PoseWithCovarianceStamped::ConstPtr amclPose;
@@ -225,14 +235,36 @@ bool MultimapNavigationActionServer::getCurrentRobotPosition(double& x, double& 
 
 // a function to publish a marker array to all the wormhole entries from the current map
 void MultimapNavigationActionServer::publishWormholeMarkers() {
+    static std::vector<int> previousMarkerIds;  // Store previously used marker IDs
     visualization_msgs::MarkerArray markerArray;
 
-    // Create a Marker
+    // First, clear previously published markers
+    if (!previousMarkerIds.empty()) {
+        visualization_msgs::MarkerArray clearMarkers;
+
+        for (int id : previousMarkerIds) {
+            visualization_msgs::Marker clearMarker;
+            clearMarker.header.frame_id = "map";
+            clearMarker.header.stamp = ros::Time::now();
+            clearMarker.ns = "wormholes";
+            clearMarker.id = id;  // Same ID as before
+            clearMarker.action = visualization_msgs::Marker::DELETE;
+
+            clearMarkers.markers.push_back(clearMarker);
+        }
+
+        ROS_INFO("Clearing %lu old markers", clearMarkers.markers.size());
+        m_markerPub.publish(clearMarkers);
+
+        previousMarkerIds.clear();  // Clear the record of previous markers
+    }
+
+    // Now, publish new markers
     visualization_msgs::Marker marker;
     marker.header.frame_id = "map";
     marker.header.stamp = ros::Time::now();
     marker.ns = "wormholes";
-    marker.id = 0;  // Unique ID for each marker if there are multiple, change if needed
+    marker.id = 0;  // Unique ID for each marker, increment if multiple markers
     marker.type = visualization_msgs::Marker::POINTS;
     marker.action = visualization_msgs::Marker::ADD;
     marker.scale.x = 0.4;  // Set the size of the points
@@ -242,7 +274,6 @@ void MultimapNavigationActionServer::publishWormholeMarkers() {
     marker.color.b = 0.0;
     marker.color.a = 1.0;
     marker.lifetime = ros::Duration(0);  // 0 means the marker will last forever
-
 
     sqlite3_stmt* stmt;
     std::string query = "SELECT entry_x, entry_y FROM wormholes WHERE source_map =?";
@@ -258,17 +289,12 @@ void MultimapNavigationActionServer::publishWormholeMarkers() {
         double entryX = sqlite3_column_double(stmt, 0);
         double entryY = sqlite3_column_double(stmt, 1);
 
-        //print the values of entryX and entryY
         ROS_INFO("Wormhole entry: x = %.2f, y = %.2f", entryX, entryY);
 
         geometry_msgs::Point p;
         p.x = entryX;
         p.y = entryY;
 
-
-
-
-        // Add the point to the marker
         marker.points.push_back(p);
     }
 
@@ -279,39 +305,61 @@ void MultimapNavigationActionServer::publishWormholeMarkers() {
 
     if (!markerArray.markers.empty()) {
         ROS_INFO("Publishing %lu markers", markerArray.markers.size());
-        //add a two second delay
         ros::Duration(2.0).sleep();
         m_markerPub.publish(markerArray);
+
+        // Store IDs of newly published markers
+        for (const auto& m : markerArray.markers) {
+            previousMarkerIds.push_back(m.id);
+        }
     } else {
         ROS_WARN("MarkerArray is empty; no markers to publish.");
     }
 
-
     ROS_INFO("Published wormhole markers for map: %s", m_currentMap.c_str());
 }
+
 
 double MultimapNavigationActionServer::calculatePathCost(double startX, double startY, double goalX, double goalY) {
     nav_msgs::GetPlan srv;
     srv.request.start.pose.position.x = startX;
     srv.request.start.pose.position.y = startY;
-    srv.request.start.pose.orientation.w = 1.0;  // Assume facing forward
+    srv.request.start.pose.orientation.w = 1.0;
     srv.request.goal.pose.position.x = goalX;
     srv.request.goal.pose.position.y = goalY;
-    srv.request.goal.pose.orientation.w = 1.0;  // Assume facing forward
+    srv.request.goal.pose.orientation.w = 1.0;
 
-    if (m_makePlanClient.call(srv)) {
-        double cost = 0.0;
-        for (size_t i = 1; i < srv.response.plan.poses.size(); ++i) {
-            const auto& p1 = srv.response.plan.poses[i - 1].pose.position;
-            const auto& p2 = srv.response.plan.poses[i].pose.position;
-            cost += std::hypot(p2.x - p1.x, p2.y - p1.y);
-        }
-        return cost;
-    } else {
-        ROS_ERROR("Failed to call make_plan service");
-        return std::numeric_limits<double>::infinity();  // High cost if no path is found
+    srv.request.start.header.frame_id = "map";
+    srv.request.goal.header.frame_id = "map";
+    srv.request.start.header.stamp = ros::Time::now();
+    srv.request.goal.header.stamp = ros::Time::now();
+
+    if (!m_makePlanClient.call(srv)) {
+        ROS_ERROR("Failed to call make_plan service. Is the service running?");
+        return std::numeric_limits<double>::infinity();
     }
+
+    if (srv.response.plan.poses.empty()) {
+        ROS_WARN("Path returned by make_plan is empty.");
+        return std::numeric_limits<double>::infinity();
+    }
+
+    double cost = 0.0;
+    for (size_t i = 1; i < srv.response.plan.poses.size(); ++i) {
+        const auto& p1 = srv.response.plan.poses[i - 1].pose.position;
+        const auto& p2 = srv.response.plan.poses[i].pose.position;
+
+        if (std::isnan(p1.x) || std::isnan(p1.y) || std::isnan(p2.x) || std::isnan(p2.y)) {
+            ROS_ERROR("Path contains NaN values!");
+            return std::numeric_limits<double>::infinity();
+        }
+
+        cost += std::hypot(p2.x - p1.x, p2.y - p1.y);
+    }
+
+    return cost;
 }
+
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "multimap_navigation_action_server");
