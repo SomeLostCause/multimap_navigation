@@ -3,7 +3,7 @@
   <version>0.0.1</version>
   <description>The multimap_navigation package</description>
 
-  <maintainer email="user@example.com">Your Name</maintainer>
+  <maintainer email="athul@anscer.com">Your Name</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>catkin</buildtool_depend>
