@@ -1,7 +1,7 @@
 <package format="2">
   <name>multimap_navigation</name>
   <version>0.0.1</version>
-  <description>The multimap_navigation package</description>
+  <description>A package for facilitating multimap navigation</description>
 
   <maintainer email="athul@anscer.com">Your Name</maintainer>
   <license>MIT</license>
